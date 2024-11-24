@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
         get_permission()
 
         // Set bottom Navigation bar
@@ -143,8 +144,8 @@ class MainActivity : AppCompatActivity() {
 
                 val h = mutable.height
                 val w = mutable.width
-                paint.textSize = h/15f
-                paint.strokeWidth = h/85f
+                paint.textSize = h/30f
+                paint.strokeWidth = h/250f
                 var x = 0
 
                 scores.forEachIndexed { index, fl ->
@@ -153,7 +154,7 @@ class MainActivity : AppCompatActivity() {
                     if(fl > 0.6){
                         var label = labels[classes[index].toInt()]
                         val includeLabels = setOf("car","motorcycle","bus","truck");
-                        if (includeLabels.contains(label)){
+                        if (!includeLabels.contains(label)){
                             paint.setColor(colors.get(index))
                             paint.style = Paint.Style.STROKE
                             canvas.drawRect(RectF(locations.get(x+1)*w, locations.get(x)*h, locations.get(x+3)*w, locations.get(x+2)*h), paint)
@@ -162,10 +163,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-
                 imageView.setImageBitmap(mutable)
-
-
             }
         }
 
@@ -212,16 +210,6 @@ class MainActivity : AppCompatActivity() {
     fun get_permission(){
         if(ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED){
             requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 101)
-        }
-    }
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if(grantResults[0] != PackageManager.PERMISSION_GRANTED){
-            get_permission()
         }
     }
 }

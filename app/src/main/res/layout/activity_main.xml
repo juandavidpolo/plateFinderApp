@@ -27,8 +27,7 @@
             android:id="@+id/imageView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#000"
-            android:visibility="gone" /> <!-- Initially hidden -->
+            android:background="#000"/> <!-- Initially hidden -->
     </FrameLayout>
 
     <!-- FrameLayout for nav_history -->
