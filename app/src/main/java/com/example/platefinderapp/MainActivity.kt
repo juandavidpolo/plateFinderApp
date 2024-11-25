@@ -34,6 +34,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONObject
 import java.io.IOException
 import android.os.AsyncTask
+import android.widget.ProgressBar
 
 
 class MainActivity : AppCompatActivity() {
@@ -50,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     lateinit var handler: Handler
     lateinit var cameraManager: CameraManager
     lateinit var textureView: TextureView
+    lateinit var progressBar: ProgressBar
     lateinit var model:SsdMobilenetV11Metadata1
 
     lateinit var recordAdapter: RecordAdapter
@@ -75,6 +77,25 @@ class MainActivity : AppCompatActivity() {
         val homeView: FrameLayout = findViewById(R.id.nav_home)
         val historyView: FrameLayout = findViewById(R.id.nav_history)
         val historyList: RecyclerView = findViewById(R.id.recyclerView)
+        val progressBar: ProgressBar = findViewById(R.id.progressBar)
+
+        progressBar.visibility = View.VISIBLE
+        // Hide after some operation
+        Handler().postDelayed({
+            progressBar.visibility = View.GONE
+        }, 2000) // Hide after 3 seconds
+
+        fun showLoading() {
+            imageView.visibility = View.GONE
+            textureView.visibility = View.GONE
+            progressBar.visibility = View.VISIBLE
+        }
+
+        fun hideLoading() {
+            imageView.visibility = View.VISIBLE
+            textureView.visibility = View.VISIBLE
+            progressBar.visibility = View.GONE
+        }
 
         recordAdapter = RecordAdapter(appRecords)
         historyList.layoutManager = LinearLayoutManager(this)
@@ -184,7 +205,9 @@ class MainActivity : AppCompatActivity() {
                                     val isReported = getRandomBoolean()  // Simulated
 
                                     // Use AsyncTask to handle network request on a background thread
+                                    showLoading()
                                     RequestImageAsyncTask(historyList).execute(base64Image, plate, isReported.toString())
+                                    hideLoading()
                                 }
                             }
                             canvas.drawRect(RectF(locations.get(x+1)*w, locations.get(x)*h, locations.get(x+3)*w, locations.get(x+2)*h), paint)
@@ -195,9 +218,7 @@ class MainActivity : AppCompatActivity() {
                 imageView.setImageBitmap(mutable)
             }
         }
-
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-
     }
 
     override fun onDestroy() {
