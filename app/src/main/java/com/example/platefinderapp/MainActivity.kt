@@ -35,6 +35,16 @@ import com.google.android.material.bottomnavigation.BottomNavigationView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 
+import android.util.Base64
+import java.io.ByteArrayOutputStream
+
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import org.json.JSONObject
+import java.io.IOException
+import android.os.AsyncTask
+
+
 class MainActivity : AppCompatActivity() {
 
     lateinit var labels:List<String>
@@ -50,6 +60,10 @@ class MainActivity : AppCompatActivity() {
     lateinit var cameraManager: CameraManager
     lateinit var textureView: TextureView
     lateinit var model:SsdMobilenetV11Metadata1
+
+    // Track recently detected objects to avoid multiple requests for the same one
+    private val recentlyDetectedObjects = mutableMapOf<String, Long>()
+    private val requestInterval: Long = 2000  // 2 seconds interval between requests
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -115,7 +129,6 @@ class MainActivity : AppCompatActivity() {
         handler = Handler(handlerThread.looper)
 
         imageView = findViewById(R.id.imageView)
-
         textureView = findViewById(R.id.textureView)
         textureView.surfaceTextureListener = object:TextureView.SurfaceTextureListener{
             override fun onSurfaceTextureAvailable(p0: SurfaceTexture, p1: Int, p2: Int) {
@@ -151,15 +164,31 @@ class MainActivity : AppCompatActivity() {
                 scores.forEachIndexed { index, fl ->
                     x = index
                     x *= 4
-                    if(fl > 0.6){
+                    if(fl > 0.75){
                         var label = labels[classes[index].toInt()]
-                        val includeLabels = setOf("car","motorcycle","bus","truck");
-                        if (!includeLabels.contains(label)){
+                        val includeLabels = setOf("laptop");
+                        if (includeLabels.contains(label)){
                             paint.setColor(colors.get(index))
                             paint.style = Paint.Style.STROKE
-                            canvas.drawRect(RectF(locations.get(x+1)*w, locations.get(x)*h, locations.get(x+3)*w, locations.get(x+2)*h), paint)
                             paint.style = Paint.Style.FILL
+                            canvas.drawRect(RectF(locations.get(x+1)*w, locations.get(x)*h, locations.get(x+3)*w, locations.get(x+2)*h), paint)
                             canvas.drawText(label, locations.get(x+1)*w, locations.get(x)*h, paint)
+
+                            val objectKey = "${label}-${locations[x + 1]}-${locations[x]}-${locations[x + 3]}-${locations[x + 2]}"
+                            val currentTime = System.currentTimeMillis()
+
+                            // Only send request if enough time has passed or if the object is new
+                            if (currentTime - (recentlyDetectedObjects[objectKey] ?: 0) >= requestInterval) {
+                                // Save the timestamp for this object
+                                recentlyDetectedObjects[objectKey] = currentTime
+
+                                val base64Image = bitmapToBase64(bitmap)
+                                val plate = generateRandomString()  // Simulated
+                                val isReported = getRandomBoolean()  // Simulated
+
+                                // Use AsyncTask to handle network request on a background thread
+                                RequestImageAsyncTask().execute(base64Image, plate, isReported.toString())
+                            }
                         }
                     }
                 }
@@ -207,9 +236,69 @@ class MainActivity : AppCompatActivity() {
         }, handler)
     }
 
+    /*Request*/
+    inner class RequestImageAsyncTask : AsyncTask<String, Void, Pair<String?, Int?>>() {
+        override fun doInBackground(vararg params: String):  Pair<String?, Int?> {
+            val base64Image = params[0]
+            val plate = params[1]
+            val isReported = params[2].toBoolean()
+
+            val url = ""
+            val client = OkHttpClient()
+            val jsonObject = JSONObject()
+            jsonObject.put("img", base64Image)
+            jsonObject.put("plate", plate)
+            jsonObject.put("isReported", isReported)
+
+            val mediaType = "application/json".toMediaType()
+            val body = RequestBody.create(mediaType, jsonObject.toString())
+
+            val request = Request.Builder()
+                .url(url)
+                .post(body)
+                .build()
+
+            return try {
+                val response = client.newCall(request).execute()
+                Pair(response.body?.string(), response.code)
+            } catch (e: IOException) {
+                Pair(null, null)
+            }
+        }
+
+        override fun onPostExecute(result: Pair<String?, Int?>) {
+            val (responseBody, statusCode) = result
+            if (responseBody != null) {
+                Log.d("Response", "Response: $responseBody, Status Code: $statusCode")
+            } else {
+                Log.d("Response", "Request failed with Status Code: $statusCode")
+            }
+        }
+    }
+
     fun get_permission(){
         if(ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED){
             requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 101)
         }
+    }
+
+    /*Random plate generator*/
+    fun generateRandomString(): String {
+        val letters = ('a'..'z').toList()
+        val numbers = ('0'..'9').toList()
+        val randomLetters = List(3) { letters.random() }.joinToString("")
+        val randomNumbers = List(3) { numbers.random() }.joinToString("")
+        return randomLetters + randomNumbers
+    }
+    /*Random bool generator*/
+    fun getRandomBoolean(): Boolean {
+        return (0..1).random() == 1
+    }
+    /*convert img to b64*/
+    fun bitmapToBase64(bitmap: Bitmap): String {
+        val byteArrayOutputStream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, byteArrayOutputStream)  // Use PNG or JPEG
+        val byteArray = byteArrayOutputStream.toByteArray()
+        return Base64.encodeToString(byteArray, Base64.DEFAULT)
     }
 }
