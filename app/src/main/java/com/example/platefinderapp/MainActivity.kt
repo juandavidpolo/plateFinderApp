@@ -1,9 +1,5 @@
 package com.example.platefinderapp
 
-import com.example.platefinderapp.AppRecord
-
-import com.example.platefinderapp.RecordAdapter
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
@@ -21,23 +17,18 @@ import android.view.TextureView
 import android.widget.ImageView
 import android.widget.FrameLayout
 import android.view.View
-import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
-import com.android.volley.RequestQueue
 import com.example.platefinderapp.ml.SsdMobilenetV11Metadata1
 import org.tensorflow.lite.support.common.FileUtil
 import org.tensorflow.lite.support.image.ImageProcessor
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.image.ops.ResizeOp
-
 import com.google.android.material.bottomnavigation.BottomNavigationView
-
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-
 import android.util.Base64
 import java.io.ByteArrayOutputStream
-
+import com.google.gson.Gson
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONObject
@@ -109,17 +100,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Sample data for history view
-        val records = listOf(
-            AppRecord("Record 1"),
-            AppRecord("Record 2"),
-            AppRecord("Record 3"),
-            AppRecord("Record 4"),
-            AppRecord("Record 5")
-        )
-        // Set up RecyclerView
         historyList.layoutManager = LinearLayoutManager(this)
-        historyList.adapter = RecordAdapter(records)
 
         labels = FileUtil.loadLabels(this, "labels.txt")
         imageProcessor = ImageProcessor.Builder().add(ResizeOp(300, 300, ResizeOp.ResizeMethod.BILINEAR)).build()
@@ -152,7 +133,7 @@ class MainActivity : AppCompatActivity() {
                 val scores = outputs.scoresAsTensorBuffer.floatArray
                 val numberOfDetections = outputs.numberOfDetectionsAsTensorBuffer.floatArray
 
-                var mutable = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+                val mutable = bitmap.copy(Bitmap.Config.ARGB_8888, true)
                 val canvas = Canvas(mutable)
 
                 val h = mutable.height
@@ -187,7 +168,7 @@ class MainActivity : AppCompatActivity() {
                                 val isReported = getRandomBoolean()  // Simulated
 
                                 // Use AsyncTask to handle network request on a background thread
-                                RequestImageAsyncTask().execute(base64Image, plate, isReported.toString())
+                                RequestImageAsyncTask(historyList).execute(base64Image, plate, isReported.toString())
                             }
                         }
                     }
@@ -211,10 +192,10 @@ class MainActivity : AppCompatActivity() {
             override fun onOpened(p0: CameraDevice) {
                 cameraDevice = p0
 
-                var surfaceTexture = textureView.surfaceTexture
-                var surface = Surface(surfaceTexture)
+                val surfaceTexture = textureView.surfaceTexture
+                val surface = Surface(surfaceTexture)
 
-                var captureRequest = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                val captureRequest = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                 captureRequest.addTarget(surface)
 
                 cameraDevice.createCaptureSession(listOf(surface), object: CameraCaptureSession.StateCallback(){
@@ -237,13 +218,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     /*Request*/
-    inner class RequestImageAsyncTask : AsyncTask<String, Void, Pair<String?, Int?>>() {
+    inner class RequestImageAsyncTask(val recyclerView: RecyclerView) : AsyncTask<String, Void, Pair<String?, Int?>>() {
         override fun doInBackground(vararg params: String):  Pair<String?, Int?> {
             val base64Image = params[0]
             val plate = params[1]
             val isReported = params[2].toBoolean()
 
-            val url = ""
+            val url = "https://jsonplaceholder.typicode.com/posts"
             val client = OkHttpClient()
             val jsonObject = JSONObject()
             jsonObject.put("img", base64Image)
@@ -268,7 +249,16 @@ class MainActivity : AppCompatActivity() {
 
         override fun onPostExecute(result: Pair<String?, Int?>) {
             val (responseBody, statusCode) = result
-            if (responseBody != null) {
+            if (responseBody != null && statusCode == 201) {
+                val record = Gson().fromJson(responseBody, AppRecord::class.java)
+                // Sample data for history view
+                val records = mutableListOf<AppRecord>()
+                records.add(record)
+                //For array responses
+                //val records = Gson().fromJson(responseBody, Array<AppRecord>::class.java).toList()
+                runOnUiThread {
+                    recyclerView.adapter = RecordAdapter(records)
+                }
                 Log.d("Response", "Response: $responseBody, Status Code: $statusCode")
             } else {
                 Log.d("Response", "Request failed with Status Code: $statusCode")
