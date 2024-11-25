@@ -52,9 +52,17 @@ class MainActivity : AppCompatActivity() {
     lateinit var textureView: TextureView
     lateinit var model:SsdMobilenetV11Metadata1
 
+    lateinit var recordAdapter: RecordAdapter
+    lateinit var recyclerView: RecyclerView
+    private val appRecords: MutableList<AppRecord> = mutableListOf()
+
     // Track recently detected objects to avoid multiple requests for the same one
     private val recentlyDetectedObjects = mutableMapOf<String, Long>()
-    private val requestInterval: Long = 2000  // 2 seconds interval between requests
+    private val objectPositions = mutableMapOf<String, RectF>()
+    private val requestInterval: Long = 500  // 2 seconds interval between requests
+
+    // Threshold to determine if the object has moved enough to trigger a new request
+    private val positionChangeThreshold = 50f  // in pixels
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,6 +75,10 @@ class MainActivity : AppCompatActivity() {
         val homeView: FrameLayout = findViewById(R.id.nav_home)
         val historyView: FrameLayout = findViewById(R.id.nav_history)
         val historyList: RecyclerView = findViewById(R.id.recyclerView)
+
+        recordAdapter = RecordAdapter(appRecords)
+        historyList.layoutManager = LinearLayoutManager(this)
+        historyList.adapter = recordAdapter
 
         homeView.visibility = View.VISIBLE
         historyView.visibility = View.GONE
@@ -99,8 +111,6 @@ class MainActivity : AppCompatActivity() {
                 else -> false
             }
         }
-
-        historyList.layoutManager = LinearLayoutManager(this)
 
         labels = FileUtil.loadLabels(this, "labels.txt")
         imageProcessor = ImageProcessor.Builder().add(ResizeOp(300, 300, ResizeOp.ResizeMethod.BILINEAR)).build()
@@ -145,31 +155,40 @@ class MainActivity : AppCompatActivity() {
                 scores.forEachIndexed { index, fl ->
                     x = index
                     x *= 4
-                    if(fl > 0.75){
-                        var label = labels[classes[index].toInt()]
-                        val includeLabels = setOf("laptop");
+                    if(fl > 0.60){
+                        val label = labels[classes[index].toInt()]
+                        val includeLabels = setOf("car", "bus", "truck");
                         if (includeLabels.contains(label)){
                             paint.setColor(colors.get(index))
                             paint.style = Paint.Style.STROKE
-                            paint.style = Paint.Style.FILL
-                            canvas.drawRect(RectF(locations.get(x+1)*w, locations.get(x)*h, locations.get(x+3)*w, locations.get(x+2)*h), paint)
-                            canvas.drawText(label, locations.get(x+1)*w, locations.get(x)*h, paint)
+                            val left = locations[x + 1] * w
+                            val top = locations[x] * h
+                            val right = locations[x + 3] * w
+                            val bottom = locations[x + 2] * h
+                            val rect = RectF(left, top, right, bottom)
 
                             val objectKey = "${label}-${locations[x + 1]}-${locations[x]}-${locations[x + 3]}-${locations[x + 2]}"
                             val currentTime = System.currentTimeMillis()
 
-                            // Only send request if enough time has passed or if the object is new
-                            if (currentTime - (recentlyDetectedObjects[objectKey] ?: 0) >= requestInterval) {
-                                // Save the timestamp for this object
-                                recentlyDetectedObjects[objectKey] = currentTime
+                            // Check if object position has changed significantly (threshold for movement)
+                            val previousPosition = objectPositions[objectKey]
+                            if (previousPosition == null || rect.isMovedEnough(previousPosition)) {
+                                // Only send request if enough time has passed or if the object is new
+                                if (currentTime - (recentlyDetectedObjects[objectKey] ?: 0) >= requestInterval) {
+                                    // Save the timestamp for this object
+                                    recentlyDetectedObjects[objectKey] = currentTime
+                                    objectPositions[objectKey] = rect
 
-                                val base64Image = bitmapToBase64(bitmap)
-                                val plate = generateRandomString()  // Simulated
-                                val isReported = getRandomBoolean()  // Simulated
+                                    val base64Image = bitmapToBase64(bitmap)
+                                    val plate = generateRandomString()  // Simulated
+                                    val isReported = getRandomBoolean()  // Simulated
 
-                                // Use AsyncTask to handle network request on a background thread
-                                RequestImageAsyncTask(historyList).execute(base64Image, plate, isReported.toString())
+                                    // Use AsyncTask to handle network request on a background thread
+                                    RequestImageAsyncTask(historyList).execute(base64Image, plate, isReported.toString())
+                                }
                             }
+                            canvas.drawRect(RectF(locations.get(x+1)*w, locations.get(x)*h, locations.get(x+3)*w, locations.get(x+2)*h), paint)
+                            canvas.drawText(label, locations.get(x+1)*w, locations.get(x)*h, paint)
                         }
                     }
                 }
@@ -250,14 +269,26 @@ class MainActivity : AppCompatActivity() {
         override fun onPostExecute(result: Pair<String?, Int?>) {
             val (responseBody, statusCode) = result
             if (responseBody != null && statusCode == 201) {
-                val record = Gson().fromJson(responseBody, AppRecord::class.java)
-                // Sample data for history view
-                val records = mutableListOf<AppRecord>()
-                records.add(record)
-                //For array responses
-                //val records = Gson().fromJson(responseBody, Array<AppRecord>::class.java).toList()
+                val records: MutableList<AppRecord> = mutableListOf()
+
+                try {
+                    // Try parsing as a single object first
+                    val record = Gson().fromJson(responseBody, AppRecord::class.java)
+                    records.add(record)
+                } catch (e: Exception) {
+                    // If it's not a single object, try parsing as an array
+                    try {
+                        val recordsArray = Gson().fromJson(responseBody, Array<AppRecord>::class.java)
+                        records.addAll(recordsArray.toList()) // Add all the records from the array
+                    } catch (e: Exception) {
+                        Log.e("Response", "Error parsing response: ${e.message}")
+                    }
+                }
+
+                // Update the main thread UI with new records and notify adapter
                 runOnUiThread {
-                    recyclerView.adapter = RecordAdapter(records)
+                    appRecords.addAll(records)  // Add the new records to the existing list
+                    recordAdapter.notifyDataSetChanged()  // Notify the adapter to update the RecyclerView
                 }
                 Log.d("Response", "Response: $responseBody, Status Code: $statusCode")
             } else {
@@ -270,6 +301,12 @@ class MainActivity : AppCompatActivity() {
         if(ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED){
             requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 101)
         }
+    }
+
+    private fun RectF.isMovedEnough(previous: RectF): Boolean {
+        val deltaX = Math.abs(this.left - previous.left)
+        val deltaY = Math.abs(this.top - previous.top)
+        return deltaX > positionChangeThreshold || deltaY > positionChangeThreshold
     }
 
     /*Random plate generator*/
