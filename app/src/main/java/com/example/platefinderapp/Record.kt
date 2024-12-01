@@ -1,7 +1,10 @@
 package com.example.platefinderapp
 
+import android.graphics.Bitmap
+
 data class AppRecord(
-    val id: Int,
     val plate: String,
-    val isReported: Boolean
+    val isReported: Boolean,
+    val image: Bitmap,
+    val location: String
 )

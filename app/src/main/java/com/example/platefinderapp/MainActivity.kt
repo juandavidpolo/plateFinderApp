@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.hardware.camera2.*
+import android.location.Location
 import android.os.*
 import android.util.Base64
 import android.util.Log
@@ -17,11 +18,14 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.platefinderapp.ml.SsdMobilenetV11Metadata1
 import com.google.android.material.bottomnavigation.BottomNavigationView
+import com.google.android.gms.location.*
+import com.google.android.gms.location.LocationServices
 import com.google.gson.Gson
 import kotlinx.coroutines.*
 import okhttp3.*
@@ -55,6 +59,12 @@ class MainActivity : AppCompatActivity() {
     }
     private val requestInterval: Long = 500
     private val positionChangeThreshold = 50f
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private var lastLocation: Location? = null
+
+    companion object {
+        private const val LOCATION_PERMISSION_REQUEST_CODE = 102
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,6 +73,7 @@ class MainActivity : AppCompatActivity() {
         initializeViews()
         setupBottomNavigation()
         initializeModel()
+        initializeLocationServices()
 
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
@@ -83,7 +94,7 @@ class MainActivity : AppCompatActivity() {
         historyList.layoutManager = LinearLayoutManager(this)
         historyList.adapter = RecordAdapter(appRecords)
 
-        cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
         handler = Handler(Looper.getMainLooper())
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -204,6 +215,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun initializeLocationServices() {
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 102)
+        } else {
+            fetchLocation()
+        }
+    }
+
+    private fun fetchLocation() {
+        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+            if (location != null) {
+                lastLocation = location
+            } else {
+                Log.e("Location", "Unable to fetch location")
+            }
+        }.addOnFailureListener {
+            Log.e("LocationError", "Failed to fetch location: ${it.message}")
+        }
+    }
+
     private fun handleDetectedObject(rect: RectF, bitmap: Bitmap) {
         val objectKey = "${rect.left}-${rect.top}-${rect.right}-${rect.bottom}"
         val currentTime = System.currentTimeMillis()
@@ -212,15 +245,36 @@ class MainActivity : AppCompatActivity() {
             recentlyDetectedObjects[objectKey] = currentTime
             objectPositions[objectKey] = rect
 
+            val croppedBitmap = Bitmap.createBitmap(
+                bitmap,
+                rect.left.toInt().coerceAtLeast(0),
+                rect.top.toInt().coerceAtLeast(0),
+                rect.width().toInt().coerceAtMost(bitmap.width - rect.left.toInt()),
+                rect.height().toInt().coerceAtMost(bitmap.height - rect.top.toInt())
+            )
+
             CoroutineScope(Dispatchers.IO).launch {
-                val base64Image = bitmapToBase64(bitmap)
-                val response = sendObjectData(base64Image, generateRandomString(), getRandomBoolean())
+                val base64Image = bitmapToBase64(croppedBitmap)
+                val locationData = lastLocation?.let {
+                    "Lat: ${it.latitude}, Lng: ${it.longitude}"
+                } ?: "Location unavailable"
+                val jsonObject = JSONObject().apply {
+                    put("img", croppedBitmap)
+                    put("plate", generateRandomString())
+                    put("isReported", getRandomBoolean())
+                    put("location", locationData)
+                }
+                appRecords.addAll(listOf(AppRecord(generateRandomString(), getRandomBoolean(), croppedBitmap, locationData)));
+                //val response = sendObjectData(base64Image, generateRandomString(), getRandomBoolean())
+                /*
                 withContext(Dispatchers.Main) {
                     if (response != null) {
                         appRecords.addAll(parseResponse(response))
                         findViewById<RecyclerView>(R.id.recyclerView).adapter?.notifyDataSetChanged()
                     }
                 }
+                */
+
             }
         }
     }
@@ -263,6 +317,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun generateRandomString(): String = List(3) { ('A'..'Z').random() }.joinToString("") + List(3) { ('0'..'9').random() }.joinToString("")
     private fun getRandomBoolean(): Boolean = (0..1).random() == 1
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == LOCATION_PERMISSION_REQUEST_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                fetchLocation()
+            } else {
+                Log.e("Permission", "Location permission denied")
+            }
+        }
+    }
 
     override fun onDestroy() {
         super.onDestroy()
