@@ -1,5 +1,7 @@
 package com.example.platefinderapp
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
@@ -8,6 +10,7 @@ import android.graphics.*
 import android.hardware.camera2.*
 import android.location.Location
 import android.os.*
+import android.os.Build
 import android.util.Base64
 import android.util.Log
 import android.util.Size
@@ -18,6 +21,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.NotificationCompat
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -37,6 +41,7 @@ import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.image.ops.ResizeOp
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import androidx.activity.result.contract.ActivityResultContracts
 
 
 class MainActivity : AppCompatActivity() {
@@ -62,6 +67,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var lastLocation: Location? = null
 
+    private var currentView: String = "home"
+
     companion object {
         private const val LOCATION_PERMISSION_REQUEST_CODE = 102
     }
@@ -74,6 +81,17 @@ class MainActivity : AppCompatActivity() {
         setupBottomNavigation()
         initializeModel()
         initializeLocationServices()
+        createNotificationChannel()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
 
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
@@ -115,10 +133,12 @@ class MainActivity : AppCompatActivity() {
         bottomNavigationView.setOnItemSelectedListener { item ->
             when (item.itemId) {
                 R.id.nav_home -> {
+                    currentView = "home"
                     toggleView(true)
                     true
                 }
                 R.id.nav_history -> {
+                    currentView = "history"
                     toggleView(false)
                     true
                 }
@@ -265,6 +285,8 @@ class MainActivity : AppCompatActivity() {
                     put("location", locationData)
                 }
                 appRecords.addAll(listOf(AppRecord(generateRandomString(), getRandomBoolean(), croppedBitmap, locationData)));
+                //Add notifications
+                sendNotification(generateRandomString());
                 //val response = sendObjectData(base64Image, generateRandomString(), getRandomBoolean())
                 /*
                 withContext(Dispatchers.Main) {
@@ -318,14 +340,53 @@ class MainActivity : AppCompatActivity() {
     private fun generateRandomString(): String = List(3) { ('A'..'Z').random() }.joinToString("") + List(3) { ('0'..'9').random() }.joinToString("")
     private fun getRandomBoolean(): Boolean = (0..1).random() == 1
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == LOCATION_PERMISSION_REQUEST_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                fetchLocation()
-            } else {
-                Log.e("Permission", "Location permission denied")
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channelId = "object_detection_channel"
+            val channelName = "Object Detection Notifications"
+            val channelDescription = "Notifies when a new object is detected and added to the list"
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
+
+            val channel = NotificationChannel(channelId, channelName, importance).apply {
+                description = channelDescription
             }
+
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager?.createNotificationChannel(channel)
+        }
+    }
+
+    @SuppressLint("NotificationPermission")
+    private fun sendNotification(plate: String) {
+        if (currentView != "history"){
+            val channelId = "object_detection_channel"
+            val notificationId = System.currentTimeMillis().toInt()
+
+            val notification = NotificationCompat.Builder(this, channelId)
+                //.setSmallIcon(R.drawable.notification) // Replace with your app's notification icon
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Placa reportada")
+                .setContentText("La placa ${plate} se encuentre reportada.")
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.notify(notificationId, notification)
+        }
+    }
+
+    fun areNotificationsEnabled(context: Context): Boolean {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        return notificationManager.areNotificationsEnabled()
+    }
+
+    val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            // Permission granted
+        } else {
+            // Permission denied
         }
     }
 
